@@ -2,8 +2,8 @@ name: Auto YouTube News Post
 
 on:
   schedule:
-    - cron: '0 2 * * *'  # रोज़ सुबह भारतीय समय 7:30 AM पर ऑटोमैटिक चलेगा
-  workflow_dispatch:      # मैन्युअली बटन दबाकर चलाने के लिए
+    - cron: '0 2 * * *'  # रोज़ सुबह भारतीय समय 7:30 AM पर चलेगा
+  workflow_dispatch:      # मैन्युअली चलाने के लिए
 
 jobs:
   build-and-upload:
@@ -18,11 +18,14 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Fix ImageMagick
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg imagemagick fonts-dejavu fonts-dejavu-core
-          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+          # Fix ImageMagick Policy Limits
+          sudo sed -i 's/<policy domain="resource" name="width" value=".*"\/>/<policy domain="resource" name="width" value="16KP"\/>/g' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/<policy domain="resource" name="height" value=".*"\/>/<policy domain="resource" name="height" value="16KP"\/>/g' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/<policy domain="path" rights="none" pattern="@\*"/<policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
