@@ -1,7 +1,7 @@
 feedparser
 gTTS
-moviepy
+beautifulsoup4
+moviepy==1.0.3
 google-api-python-client
 google-auth-oauthlib
 google-auth-httplib2
-beautifulsoup4
