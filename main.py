@@ -180,13 +180,4 @@ def main():
     )
 
     # 6. Upload Long Video
-    print("Uploading Long Video to YouTube...")
-    upload_to_youtube(
-        long_video, thumb_long, 
-        title=f"[ताजा समाचार] {title[:80]}", 
-        description=f"{desc}\n\nताज़ा तरीन ख़बरों के लिए सब्सक्राइब करें।", 
-        tags=["news", "hindi news", "breaking news"]
-    )
-
-if __name__ == "__main__":
-    main()
+    print("Uploading Long Video to You
