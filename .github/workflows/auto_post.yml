@@ -2,9 +2,8 @@ name: Daily YouTube News Post
 
 on:
   schedule:
-    # यह रोज सुबह 9:00 बजे IST (3:30 AM UTC) पर रन होगा
     - cron: '30 3 * * *'
-  workflow_dispatch: # मैन्युअली रन करने के लिए
+  workflow_dispatch:
 
 jobs:
   build-and-upload:
@@ -23,7 +22,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg imagemagick fonts-noto fonts-dejavu fonts-dejavu-core
-          # Fix ImageMagick Policy Limits
           sudo sed -i 's/policy domain="resource" name="width" value=".*"/policy domain="resource" name="width" value="16KP"/' /etc/ImageMagick-6/policy.xml || true
           sudo sed -i 's/policy domain="resource" name="height" value=".*"/policy domain="resource" name="height" value="16KP"/' /etc/ImageMagick-6/policy.xml || true
           sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml || true
