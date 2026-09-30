@@ -1,104 +1,93 @@
 import os
-import urllib.request
+import re
 import feedparser
+from bs4 import BeautifulSoup
 from gtts import gTTS
-from moviepy import TextClip, CompositeVideoClip, AudioFileClip, ColorClip
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from moviepy.editor import TextClip, ColorClip, CompositeVideoClip, AudioFileClip
 
-# 1. Google News RSS Feed से खबर पाना
-def fetch_top_news():
-    rss_url = "https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
+def clean_news_text(raw_text):
+    """
+    यह फ़ंक्शन न्यूज़ डेटा से HTML टैग्स, URLs, और फालतू कोड/अक्षरों को पूरी तरह साफ़ करता है।
+    """
+    if not raw_text:
+        return ""
+    
+    # 1. HTML टैग्स हटाएँ
+    soup = BeautifulSoup(raw_text, "html.parser")
+    text = soup.get_text()
+    
+    # 2. URLs और वेब एड्रेस हटाएँ
+    text = re.sub(r'http[s]?://\S+|www\.\S+', '', text)
+    
+    # 3. HTML entities जैसे &nbsp; हटाएँ
+    text = re.sub(r'&[a-zA-Z0-9#]+;', ' ', text)
+    
+    # 4. 4 या उससे लंबे अंग्रेज़ी/अंकों के कोड हटाएँ (जो RSS फालतू भेजता है)
+    text = re.sub(r'\b[a-zA-Z0-9_\-=]{4,}\b', '', text)
+    
+    # 5. फालतू स्पेस और न्यू-लाइन्स साफ़ करें
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
+
+def generate_video():
+    # 1. RSS Feed से ताज़ा खबर उठाना
+    rss_url = "https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi" # आपकी हिंदी न्यूज़ RSS URL
     feed = feedparser.parse(rss_url)
-    if feed.entries:
-        entry = feed.entries[0]
-        title = entry.title
-        summary = getattr(entry, 'summary', title)
-        return title, summary
-    return "आज की मुख्य खबर", "खबर उपलब्ध नहीं है"
+    
+    if not feed.entries:
+        print("कोई न्यूज़ नहीं मिली!")
+        return
 
-# 2. Text-to-Speech (आवाज बनाना)
-def generate_audio(text, filename="news_audio.mp3"):
-    tts = gTTS(text=text, lang='hi')
-    tts.save(filename)
-    return filename
+    first_entry = feed.entries[0]
+    raw_title = first_entry.get('title', '')
+    raw_desc = first_entry.get('summary', '')
 
-# 3. वीडियो बनाना (Fast Rendering Settings)
-def create_video(news_text, audio_file, output_file="final_news.mp4"):
-    audio = AudioFileClip(audio_file)
-    duration = audio.duration
+    # 2. न्यूज़ टेक्स्ट की गहरी सफाई (Clean Up)
+    clean_title = clean_news_text(raw_title)
+    clean_desc = clean_news_text(raw_desc)
 
-    # Vertical 720x1280 Background (Fast & Clean)
-    bg_clip = ColorClip(size=(720, 1280), color=(0, 0, 0), duration=duration)
+    # वॉइस के लिए केवल साफ हिंदी टेक्स्ट ही इस्तेमाल होगा
+    script_text = f"{clean_title}। {clean_desc}"
+    print(f"साफ किया गया वॉइस टेक्स्ट: {script_text}")
 
-    # News Text Formatting
+    # 3. TTS (Text-to-Speech) - वॉइस जनरेट करना
+    tts = gTTS(text=script_text, lang='hi', slow=False)
+    audio_path = "news_audio.mp3"
+    tts.save(audio_path)
+
+    # 4. ऑडियो क्लिप की लंबाई निकालना
+    audio_clip = AudioFileClip(audio_path)
+    duration = audio_clip.duration
+
+    # 5. वीडियो क्लिप बनाना (15 FPS ऑप्टिमाइज्ड)
+    bg_clip = ColorClip(size=(1080, 1920), color=(15, 15, 25), duration=duration)
+
+    # ऑन-स्क्रीन टेक्स्ट क्लिप
+    display_text = f"{clean_title}\n\n{clean_desc}"
     txt_clip = TextClip(
-        text=news_text, 
-        font_size=36, 
+        display_text, 
+        fontsize=45, 
         color='white', 
-        size=(620, None), 
-        method='caption'
-    )
-    txt_clip = txt_clip.with_position('center').with_duration(duration)
+        size=(950, 1600), 
+        method='caption', 
+        font='DejaVu-Sans-Bold'
+    ).set_position('center').set_duration(duration)
 
-    # Composite & Render with Ultrafast Preset
-    video = CompositeVideoClip([bg_clip, txt_clip])
-    video = video.with_audio(audio)
+    # ऑडियो और टेक्स्ट को मिलाना
+    video = CompositeVideoClip([bg_clip, txt_clip]).set_audio(audio_clip)
+
+    # 6. वीडियो रेंडर करना (15 FPS)
+    output_video = "final_news.mp4"
     video.write_videofile(
-        output_file, 
+        output_video, 
         fps=15, 
         codec='libx264', 
-        audio_codec='aac', 
+        audio_codec='aac',
         preset='ultrafast'
     )
-    return output_file
+    print("वीडियो सफलतापूर्वक तैयार हो गया!")
 
-# 4. YouTube API द्वारा वीडियो अपलोड करना
-def upload_to_youtube(video_path, title):
-    client_id = os.environ.get('CLIENT_ID')
-    client_secret = os.environ.get('CLIENT_SECRET')
-    refresh_token = os.environ.get('REFRESH_TOKEN')
-
-    creds = Credentials(
-        None,
-        refresh_token=refresh_token,
-        token_uri='https://oauth2.googleapis.com/token',
-        client_id=client_id,
-        client_secret=client_secret
-    )
-
-    youtube = build('youtube', 'v3', credentials=creds)
-
-    request_body = {
-        'snippet': {
-            'title': title[:100],
-            'description': f"{title}\n\n#news #hindi #trending #shorts #breakingnews",
-            'tags': ['news', 'hindi news', 'breaking news', 'shorts'],
-            'categoryId': '25'
-        },
-        'status': {
-            'privacyStatus': 'public',
-            'selfDeclaredMadeForKids': False
-        }
-    }
-
-    media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
-    request = youtube.videos().insert(
-        part='snippet,status',
-        body=request_body,
-        media_body=media
-    )
-
-    response = request.execute()
-    print(f"Video uploaded successfully! Video ID: {response.get('id')}")
-
-if __name__ == '__main__':
-    title, summary = fetch_top_news()
-    full_text = f"{title}\n\n{summary}"
-    print(f"Fetched News: {title}")
-
-    audio_file = generate_audio(full_text)
-    video_file = create_video(full_text, audio_file)
-    upload_to_youtube(video_file, title)
+if __name__ == "__main__":
+    generate_video()
     
