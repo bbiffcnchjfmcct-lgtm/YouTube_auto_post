@@ -9,75 +9,90 @@ from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
+import edge_tts
+import google.generativeai as genai
 
-# 1. DOWNLOAD HINDI FONT AUTOMATICALLY (WORKING LINK)
-FONT_PATH = "NotoSansDevanagari-Bold.ttf"
+# --- CONFIGURATION ---
+# फॉन्ट का पाथ (GitHub Actions में ऑटोमैटिक इंस्टॉल हो जाएगा)
+FONT_PATH = "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf"
 
-def ensure_hindi_font():
-    if not os.path.exists(FONT_PATH):
-        print("Downloading Devanagari Font...")
-        url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari-Bold.ttf"
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req) as response, open(FONT_PATH, 'wb') as out_file:
-                out_file.write(response.read())
-            print("Font downloaded successfully!")
-        except Exception as e:
-            print(f"Font download failed: {e}")
+# Gemini Setup
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-1.5-flash')
 
-ensure_hindi_font()
-
-# 2. CLEAN HTML & GARBAGE TEXT FROM RSS FEED
+# --- 1. CLEAN HTML ---
 def clean_html(text):
     if not text:
         return ""
-    clean = re.sub(r'<[^>]+>', '', text)
+    clean = re.sub(r'<[^>]+>', ' ', text)
     clean = re.sub(r'http[s]?://\S+', '', clean)
     clean = re.sub(r'&[a-zA-Z0-9#]+;', ' ', clean)
     clean = re.sub(r'\s+', ' ', clean).strip()
     return clean
 
+# --- 2. FETCH NEWS ---
 def get_latest_news():
     rss_url = "https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
     req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req) as response:
         xml_data = response.read()
-
     root = ET.fromstring(xml_data)
-    item = root.find('.//channel/item')
-
+    item = root.find('./channel/item')
     if item is None:
         return None, None
-
     title = clean_html(item.find('title').text if item.find('title') is not None else "")
     description = clean_html(item.find('description').text if item.find('description') is not None else "")
-
     return title, description
 
-# 3. TEXT-TO-SPEECH (EDGE-TTS AUTOMATIC INSTALL & RUN)
-def generate_audio(text, output_file="news.mp3"):
+# --- 3. GEMINI SCRIPT GENERATION ---
+def generate_script_with_gemini(news_title, news_desc):
+    prompt = f"""
+    आप एक YouTube न्यूज़ एंकर हैं। इस न्यूज़ के आधार पर हिंदी में एक शॉर्ट स्क्रिप्ट (50 शब्द) और एक लॉन्ग स्क्रिप्ट (150 शब्द) लिखें।
+    न्यूज़ टाइटल: {news_title}
+    न्यूज़ डिस्क्रिप्शन: {news_desc}
+    
+    आउटपुट फॉर्मेट बिल्कुल ऐसा होना चाहिए:
+    TITLE: [यहाँ एक आकर्षक हिंदी टाइटल लिखें]
+    SHORT_SCRIPT: [यहाँ शॉर्ट स्क्रिप्ट लिखें]
+    LONG_SCRIPT: [यहाँ लॉन्ग स्क्रिप्ट लिखें]
+    """
+    response = model.generate_content(prompt)
+    text = response.text
+    
+    title_match = re.search(r'TITLE:\s*(.*)', text)
+    short_match = re.search(r'SHORT_SCRIPT:\s*(.*?)(?=LONG_SCRIPT:|$)', text, re.DOTALL)
+    long_match = re.search(r'LONG_SCRIPT:\s*(.*)', text, re.DOTALL)
+    
+    title = title_match.group(1).strip() if title_match else news_title
+    short_script = short_match.group(1).strip() if short_match else news_desc
+    long_script = long_match.group(1).strip() if long_match else news_desc
+    
+    return title, short_script, long_script
+
+# --- 4. TTS AUDIO GENERATION ---
+async def make_audio(text, output_file):
+    communicate = edge_tts.Communicate(text, "hi-IN-MadhurNeural")
+    await communicate.save(output_file)
+
+def generate_audio(text, output_file):
     try:
-        os.system(f'python -m pip install edge-tts')
-        import edge_tts
-        async def main_tts():
-            communicate = edge_tts.Communicate(text, "hi-IN-MadhurNeural", rate="+20%")
-            await communicate.save(output_file)
-        asyncio.run(main_tts())
+        asyncio.run(make_audio(text, output_file))
         print("Audio generated successfully!")
     except Exception as e:
         print(f"Audio generation error: {e}")
         raise e
 
-# 4. CREATE OVERLAY TEXT IMAGE WITH HINDI FONT
-def create_text_overlay(title, desc, size=(1080, 1920)):
+# --- 5. IMAGE & THUMBNAIL GENERATION ---
+def create_overlay(title, desc, size=(1080, 1920)):
     w, h = size
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-
+    
     try:
-        font = ImageFont.truetype(FONT_PATH, 42)
-        header_font = ImageFont.truetype(FONT_PATH, 50)
-    except Exception:
+        font = ImageFont.truetype(FONT_PATH, 45)
+        header_font = ImageFont.truetype(FONT_PATH, 60)
+    except Exception as e:
+        print(f"Font error: {e}. Using default.")
         font = ImageFont.load_default()
         header_font = font
 
@@ -90,7 +105,6 @@ def create_text_overlay(title, desc, size=(1080, 1920)):
 
     draw.rectangle([60, box_top - 50, 450, box_top + 15], fill=(220, 38, 38))
     draw.text((80, box_top - 40), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
-
     draw.rectangle([40, box_top, w - 40, h - 80], fill=(0, 0, 0, 220), outline=(220, 38, 38), width=5)
 
     full_text = f"{wrapped_title}\n\n{wrapped_desc}"
@@ -100,7 +114,29 @@ def create_text_overlay(title, desc, size=(1080, 1920)):
     img.save(overlay_path)
     return overlay_path
 
-# 5. CREATE VIDEO WITH BACKGROUND & OVERLAY
+def create_thumbnail(title, output_path="thumbnail.jpg"):
+    w, h = 1280, 720
+    img = Image.new('RGB', (w, h), color=(20, 30, 48))
+    draw = ImageDraw.Draw(img)
+    
+    try:
+        font = ImageFont.truetype(FONT_PATH, 60)
+        header_font = ImageFont.truetype(FONT_PATH, 80)
+    except:
+        font = ImageFont.load_default()
+        header_font = font
+
+    # Background design
+    draw.rectangle([0, h-200, w, h], fill=(220, 38, 38))
+    draw.text((50, 50), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
+    
+    wrapped_title = "\n".join(textwrap.wrap(title, width=40))
+    draw.text((50, 200), wrapped_title, font=font, fill=(255, 255, 255))
+    
+    img.save(output_path)
+    return output_path
+
+# --- 6. VIDEO BUILDER ---
 def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
     audio = AudioFileClip(audio_path)
     duration = audio.duration
@@ -110,7 +146,7 @@ def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
     bg_path = f"bg_{size[0]}x{size[1]}.png"
     bg_img.save(bg_path)
 
-    overlay_path = create_text_overlay(title, desc, size=size)
+    overlay_path = create_overlay(title, desc, size=size)
 
     bg_clip = ImageClip(bg_path).set_duration(duration)
     txt_clip = ImageClip(overlay_path).set_duration(duration)
@@ -124,7 +160,6 @@ def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
         temp_audiofile='temp-audio.m4a',
         remove_temp=True
     )
-
     audio.close()
     video.close()
 
@@ -132,8 +167,8 @@ def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
         if os.path.exists(p):
             os.remove(p)
 
-# 6. YOUTUBE UPLOADER
-def upload_to_youtube(video_path, title, description, tags):
+# --- 7. YOUTUBE UPLOADER ---
+def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
     client_id = os.environ.get("CLIENT_ID")
     client_secret = os.environ.get("CLIENT_SECRET")
     refresh_token = os.environ.get("REFRESH_TOKEN")
@@ -173,35 +208,67 @@ def upload_to_youtube(video_path, title, description, tags):
         if status:
             print(f"Uploading... {int(status.progress() * 100)}%")
 
-    print(f"Video Uploaded Successfully! ID: {response.get('id')}")
+    video_id = response.get('id')
+    print(f"Video Uploaded Successfully! ID: {video_id}")
 
-# MAIN EXECUTION
+    # Thumbnail Upload
+    try:
+        youtube.thumbnails().set(
+            videoId=video_id,
+            media_body=MediaFileUpload(thumbnail_path)
+        ).execute()
+        print("Thumbnail Uploaded Successfully!")
+    except Exception as e:
+        print(f"Thumbnail upload failed: {e}")
+
+# --- MAIN EXECUTION ---
 def main():
     print("Fetching news...")
-    title, desc = get_latest_news()
-
-    if not title:
+    news_title, news_desc = get_latest_news()
+    if not news_title:
         print("No news found to process.")
         return
 
-    print(f"News Title: {title}")
+    print(f"News Title: {news_title}")
+    print("Generating Script with Gemini...")
+    title, short_script, long_script = generate_script_with_gemini(news_title, news_desc)
+    print(f"Generated Title: {title}")
 
-    full_text = f"{title}। {desc}"
-    audio_file = "news_audio.mp3"
-    generate_audio(full_text, audio_file)
+    # Thumbnail Generate
+    print("Generating Thumbnail...")
+    thumbnail_path = create_thumbnail(title)
 
-    shorts_video = "shorts_news.mp4"
+    # --- SHORTS VIDEO ---
     print("Building Shorts Video...")
-    build_video(title, desc, audio_file, shorts_video, aspect_ratio="9:16")
-
-    print("Uploading to YouTube...")
+    short_audio = "short_audio.mp3"
+    generate_audio(short_script, short_audio)
+    short_video = "shorts_video.mp4"
+    build_video(title, short_script, short_audio, short_video, aspect_ratio="9:16")
+    
+    print("Uploading Shorts to YouTube...")
     upload_to_youtube(
-        shorts_video,
+        short_video,
+        thumbnail_path,
         title=f"[Shorts] {title}",
-        description=f"{desc}\n\n#news #breakingnews #shorts #hindi",
-        tags=["shorts", "news", "hindinews"]
+        description=f"{short_script}\n\n#shorts #news #hindinews #breakingnews",
+        tags=["shorts", "news", "hindinews", "breakingnews"]
+    )
+
+    # --- LONG VIDEO ---
+    print("Building Long Video...")
+    long_audio = "long_audio.mp3"
+    generate_audio(long_script, long_audio)
+    long_video = "long_video.mp4"
+    build_video(title, long_script, long_audio, long_video, aspect_ratio="16:9")
+    
+    print("Uploading Long Video to YouTube...")
+    upload_to_youtube(
+        long_video,
+        thumbnail_path,
+        title=title,
+        description=f"{long_script}\n\n#news #hindinews #breakingnews",
+        tags=["news", "hindinews", "breakingnews", "india"]
     )
 
 if __name__ == "__main__":
     main()
-    
