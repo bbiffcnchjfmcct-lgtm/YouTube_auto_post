@@ -24,25 +24,37 @@ def generate_audio(text, filename="news_audio.mp3"):
     tts.save(filename)
     return filename
 
-# 3. वीडियो बनाना
+# 3. वीडियो बनाना (Fast Rendering Settings)
 def create_video(news_text, audio_file, output_file="final_news.mp4"):
     audio = AudioFileClip(audio_file)
     duration = audio.duration
 
-    # बैकग्राउंड (ब्लैक स्क्रीन)
-    bg_clip = ColorClip(size=(1080, 1920), color=(0, 0, 0), duration=duration)
+    # Vertical 720x1280 Background (Fast & Clean)
+    bg_clip = ColorClip(size=(720, 1280), color=(0, 0, 0), duration=duration)
 
-    # न्यूज़ टेक्स्ट
-    txt_clip = TextClip(text=news_text, font_size=50, color='white', size=(900, None), method='caption')
+    # News Text Formatting
+    txt_clip = TextClip(
+        text=news_text, 
+        font_size=36, 
+        color='white', 
+        size=(620, None), 
+        method='caption'
+    )
     txt_clip = txt_clip.with_position('center').with_duration(duration)
 
-    # वीडियो और ऑडियो को मिलाना
+    # Composite & Render with Ultrafast Preset
     video = CompositeVideoClip([bg_clip, txt_clip])
     video = video.with_audio(audio)
-    video.write_videofile(output_file, fps=24, codec='libx264', audio_codec='aac')
+    video.write_videofile(
+        output_file, 
+        fps=15, 
+        codec='libx264', 
+        audio_codec='aac', 
+        preset='ultrafast'
+    )
     return output_file
 
-# 4. YouTube पर अपलोड करना
+# 4. YouTube API द्वारा वीडियो अपलोड करना
 def upload_to_youtube(video_path, title):
     client_id = os.environ.get('CLIENT_ID')
     client_secret = os.environ.get('CLIENT_SECRET')
@@ -61,8 +73,8 @@ def upload_to_youtube(video_path, title):
     request_body = {
         'snippet': {
             'title': title[:100],
-            'description': f"{title}\n\n#news #hindi #news #trending #breakingnews",
-            'tags': ['news', 'hindi news', 'breaking news'],
+            'description': f"{title}\n\n#news #hindi #trending #shorts #breakingnews",
+            'tags': ['news', 'hindi news', 'breaking news', 'shorts'],
             'categoryId': '25'
         },
         'status': {
