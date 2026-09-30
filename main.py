@@ -17,7 +17,6 @@ import requests
 from bs4 import BeautifulSoup
 
 # --- CONFIGURATION ---
-# Font Auto-Download Function (ताकि Unknown Text की समस्या खत्म हो)
 def download_font():
     font_url = "https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari%5Bwdth%2Cwght%5D.ttf"
     font_path = "NotoSansDevanagari.ttf"
@@ -49,8 +48,30 @@ def clean_html(text):
     clean = re.sub(r'\s+', ' ', clean).strip()
     return clean
 
-# --- 2. FETCH TRENDING NEWS & IMAGE ---
+# --- 2. FETCH TRENDING NEWS (NEWS API YA RSS) ---
 def get_latest_news():
+    API_KEY = os.environ.get("NEWS_API_KEY")
+    
+    if API_KEY:
+        print("Using News API...")
+        try:
+            # यहाँ आप अपने News API का URL डाल सकते हैं (जैसे NewsAPI.org, GNews, आदि)
+            url = f"https://newsapi.org/v2/top-headlines?country=in&language=hi&apiKey={API_KEY}"
+            response = requests.get(url, timeout=15)
+            data = response.json()
+            if data.get('status') == 'ok' and data.get('articles'):
+                article = random.choice(data['articles'])
+                title = clean_html(article.get('title', ''))
+                description = clean_html(article.get('description', ''))
+                link = article.get('url', '')
+                image_url = article.get('urlToImage', '')
+                if title:
+                    return title, description, link, image_url
+        except Exception as e:
+            print(f"News API Error: {e}. Falling back to RSS.")
+
+    # Fallback: Google News RSS (अगर API काम न करे तो)
+    print("Using Google News RSS (Fallback)...")
     rss_url = "https://news.google.com/rss?hl=hi&gl=IN&ceid=IN:hi"
     req = urllib.request.Request(rss_url, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req) as response:
@@ -59,49 +80,46 @@ def get_latest_news():
     
     items = root.findall('./channel/item')
     if not items:
-        return None, None, None
+        return None, None, None, None
     
-    # टॉप 5 ट्रेंडिंग न्यूज़ में से कोई एक रैंडमली चुनें
     item = random.choice(items[:5])
-    
     title = clean_html(item.find('title').text if item.find('title') is not None else "")
     description = clean_html(item.find('description').text if item.find('description') is not None else "")
     link = item.find('link').text if item.find('link') is not None else ""
+    image_url = ""
     
-    return title, description, link
+    return title, description, link, image_url
 
-def fetch_news_image(link, title, size):
-    """ताज़ा खबर की असली इमेज निकालने की कोशिश करता है, न मिले तो AI इमेज बनाता है"""
+def fetch_news_image(link, title, size, video_type, provided_image_url=None):
     w, h = size
     
-    # 1. Try to scrape image from the news link
-    if link:
+    # 1. News API से मिली इमेज डाउनलोड करें
+    if provided_image_url:
         try:
-            headers = {'User-Agent': 'Mozilla/5.0'}
-            response = requests.get(link, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            og_image = soup.find("meta", property="og:image") or soup.find("meta", attrs={"name": "twitter:image"})
-            if og_image and og_image.get("content"):
-                img_url = og_image["content"]
-                img_data = requests.get(img_url, headers=headers, timeout=10).content
-                img_path = f"news_image_{w}x{h}.jpg"
-                with open(img_path, 'wb') as handler:
-                    handler.write(img_data)
-                print("News image scraped successfully!")
-                return img_path
+            img_data = requests.get(provided_image_url, timeout=10).content
+            img_path = f"news_api_image_{w}x{h}.jpg"
+            with open(img_path, 'wb') as handler:
+                handler.write(img_data)
+            print("Image from News API downloaded successfully!")
+            return img_path
         except Exception as e:
-            print(f"Could not scrape news image: {e}")
+            print(f"News API image download failed: {e}")
 
-    # 2. Fallback: Generate a specific AI image based on the news title
-    print("Generating AI image for the news...")
-    prompt = f"Breaking news image about: {title}, cinematic, photorealistic, high quality, news report, 4k"
+    # 2. AI इमेज जनरेट करें (Shorts और Long के लिए अलग)
+    print(f"Generating AI image for {video_type} video...")
+    if video_type == "short":
+        prompt = f"Vertical breaking news background about: {title}, highly dramatic, intense lighting, social media viral style, 8k, photorealistic"
+    else:
+        prompt = f"Widescreen cinematic news studio background about: {title}, professional broadcast, anchor desk, highly detailed, 8k, photorealistic"
+        
     encoded_prompt = urllib.parse.quote(prompt)
-    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={w}&height={h}&nologo=true"
+    random_seed = random.randint(1, 1000000)
+    url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={w}&height={h}&seed={random_seed}&nologo=true"
     
     try:
         response = requests.get(url, timeout=30)
         if response.status_code == 200:
-            bg_path = f"bg_ai_{w}x{h}.jpg"
+            bg_path = f"bg_ai_{w}x{h}_{random_seed}.jpg"
             with open(bg_path, 'wb') as f:
                 f.write(response.content)
             return bg_path
@@ -110,7 +128,7 @@ def fetch_news_image(link, title, size):
         
     return None
 
-# --- 3. GEMINI SCRIPT GENERATION ---
+# --- 3. GEMINI SCRIPT GENERATION (LONG & HOOK) ---
 def generate_script_with_gemini(news_title, news_desc):
     prompt = f"""
     आप एक वायरल YouTube न्यूज़ एंकर हैं। इस न्यूज़ के आधार पर हिंदी में स्क्रिप्ट लिखें।
@@ -119,8 +137,10 @@ def generate_script_with_gemini(news_title, news_desc):
     
     आउटपुट फॉर्मेट बिल्कुल ऐसा होना चाहिए:
     TITLE: [यहाँ एक बहुत ही चौंकाने वाला और क्लिक करने लायक हिंदी टाइटल लिखें]
-    SHORT_SCRIPT: [यहाँ 30-40 शब्दों की शॉर्ट स्क्रिप्ट लिखें। सबसे पहले एक ज़बरदस्त हुक (Hook) लगाएं, जैसे 'क्या आप जानते हैं?', 'यह खबर आपको चौंका देगी!'। फिर तेज़ अंदाज़ में न्यूज़ बताएं।]
-    LONG_SCRIPT: [यहाँ 100-150 शब्दों की लॉन्ग स्क्रिप्ट लिखें। विस्तार से बताएं।]
+    
+    SHORT_SCRIPT: [यहाँ 50-60 शब्दों की शॉर्ट स्क्रिप्ट लिखें। सबसे पहले एक ज़बरदस्त हुक (Hook) लगाएं जिससे लोग रुक जाएं, जैसे 'रुकिए! यह खबर आपको चौंका देगी!', 'क्या आप जानते हैं?'. फिर तेज़ अंदाज़ में न्यूज़ बताएं।]
+    
+    LONG_SCRIPT: [यहाँ 300-400 शब्दों की एक विस्तृत लॉन्ग स्क्रिप्ट लिखें। इसमें खबर की पूरी डिटेल, बैकग्राउंड, और लोगों की प्रतिक्रियाएं शामिल करें, ताकि वीडियो 3-4 मिनट लंबा बन सके।]
     """
     try:
         response = model.generate_content(prompt)
@@ -139,10 +159,10 @@ def generate_script_with_gemini(news_title, news_desc):
         print(f"Gemini Error: {e}. Using fallback.")
         return news_title, news_desc, news_desc
 
-# --- 4. TTS AUDIO GENERATION (FAST & LOUD) ---
+# --- 4. TTS AUDIO GENERATION (FEMALE VOICE) ---
 async def make_audio(text, output_file):
-    # +30% तेज़ और +20% लाउड (TV News Anchor Style)
-    communicate = edge_tts.Communicate(text, "hi-IN-MadhurNeural", rate="+30%", volume="+20%")
+    # 🎙️ यहाँ लड़की की आवाज़ (hi-IN-SwaraNeural) सेट की गई है
+    communicate = edge_tts.Communicate(text, "hi-IN-SwaraNeural", rate="+20%", volume="+20%")
     await communicate.save(output_file)
 
 def generate_audio(text, output_file):
@@ -154,39 +174,55 @@ def generate_audio(text, output_file):
         raise e
 
 # --- 5. IMAGE & THUMBNAIL GENERATION ---
-def create_overlay(title, desc, size=(1080, 1920)):
+def create_overlay(title, desc, size=(1080, 1920), video_type="short"):
     w, h = size
     img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     
     try:
-        font = ImageFont.truetype(FONT_PATH, 50)
-        header_font = ImageFont.truetype(FONT_PATH, 65)
+        font_size = 55 if video_type == "short" else 45
+        header_size = 70 if video_type == "short" else 60
+        font = ImageFont.truetype(FONT_PATH, font_size)
+        header_font = ImageFont.truetype(FONT_PATH, header_size)
     except Exception as e:
         print(f"Font error: {e}. Using default.")
         font = ImageFont.load_default()
         header_font = font
 
-    wrap_w = 22 if w == 1080 else 45
-    wrapped_title = "\n".join(textwrap.wrap(title, width=wrap_w))
-    wrapped_desc = "\n".join(textwrap.wrap(desc, width=wrap_w + 5))
+    if video_type == "short":
+        # 🎬 SHORTS STYLE
+        wrap_w = 22
+        wrapped_title = "\n".join(textwrap.wrap(title, width=wrap_w))
+        wrapped_desc = "\n".join(textwrap.wrap(desc, width=wrap_w + 5))
+        
+        box_h = int(h * 0.45)
+        box_top = h - box_h - 100
+        
+        draw.rectangle([60, box_top - 60, 500, box_top + 20], fill=(220, 38, 38))
+        draw.text((80, box_top - 50), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
+        draw.rectangle([40, box_top, w - 40, h - 80], fill=(0, 0, 0, 240), outline=(255, 0, 0), width=8)
+        
+        draw.text((70, box_top + 40), wrapped_title, font=font, fill=(255, 215, 0))
+        title_height = len(wrapped_title.split('\n')) * 65
+        draw.text((70, box_top + 50 + title_height), wrapped_desc, font=font, fill=(255, 255, 255))
+        
+    else:
+        # 📺 LONG VIDEO STYLE (Lower Third)
+        wrapped_title = "\n".join(textwrap.wrap(title, width=50))
+        wrapped_desc = "\n".join(textwrap.wrap(desc, width=60))
+        
+        box_h = int(h * 0.25)
+        box_top = h - box_h - 50
+        
+        draw.rectangle([0, box_top, w, box_top + 60], fill=(200, 0, 0))
+        draw.text((20, box_top + 5), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
+        draw.rectangle([0, box_top + 60, w, h], fill=(0, 0, 0, 230))
+        
+        draw.text((20, box_top + 70), wrapped_title, font=font, fill=(255, 215, 0))
+        title_height = len(wrapped_title.split('\n')) * 50
+        draw.text((20, box_top + 80 + title_height), wrapped_desc, font=font, fill=(255, 255, 255))
 
-    box_h = int(h * 0.45)
-    box_top = h - box_h - 100
-
-    # Breaking News Header
-    draw.rectangle([60, box_top - 60, 500, box_top + 20], fill=(220, 38, 38))
-    draw.text((80, box_top - 50), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
-    
-    # Text Box Background
-    draw.rectangle([40, box_top, w - 40, h - 80], fill=(0, 0, 0, 230), outline=(220, 38, 38), width=8)
-
-    # Title in Yellow, Desc in White
-    draw.text((70, box_top + 40), wrapped_title, font=font, fill=(255, 215, 0))
-    title_height = len(wrapped_title.split('\n')) * 60
-    draw.text((70, box_top + 50 + title_height), wrapped_desc, font=font, fill=(255, 255, 255))
-
-    overlay_path = f"overlay_{w}x{h}.png"
+    overlay_path = f"overlay_{video_type}_{w}x{h}.png"
     img.save(overlay_path)
     return overlay_path
 
@@ -218,13 +254,12 @@ def create_thumbnail(title, output_path="thumbnail.jpg"):
     return output_path
 
 # --- 6. VIDEO BUILDER ---
-def build_video(title, desc, audio_path, output_video, news_link, aspect_ratio="9:16"):
+def build_video(title, desc, audio_path, output_video, news_link, provided_image_url, aspect_ratio="9:16", video_type="short"):
     audio = AudioFileClip(audio_path)
     duration = audio.duration
     size = (1080, 1920) if aspect_ratio == "9:16" else (1920, 1080)
 
-    # Fetch News Image (Scraped or AI)
-    bg_path = fetch_news_image(news_link, title, size)
+    bg_path = fetch_news_image(news_link, title, size, video_type, provided_image_url)
     
     if not bg_path:
         print("Using fallback solid background.")
@@ -232,17 +267,20 @@ def build_video(title, desc, audio_path, output_video, news_link, aspect_ratio="
         bg_path = f"bg_fallback_{size[0]}x{size[1]}.png"
         bg_img.save(bg_path)
 
-    # Apply Dark Overlay so text is readable
     bg_img = Image.open(bg_path).convert('RGBA').resize(size)
-    overlay = Image.new('RGBA', size, (0, 0, 0, 180)) # 70% dark shade
+    overlay = Image.new('RGBA', size, (0, 0, 0, 160))
     bg_img = Image.alpha_composite(bg_img, overlay).convert('RGB')
     
     bg_path_final = f"bg_final_{size[0]}x{size[1]}.png"
     bg_img.save(bg_path_final)
 
-    overlay_path = create_overlay(title, desc, size=size)
+    overlay_path = create_overlay(title, desc, size=size, video_type=video_type)
 
+    # 🎬 KEN BURNS EFFECT
     bg_clip = ImageClip(bg_path_final).set_duration(duration)
+    bg_clip = bg_clip.resize(lambda t: 1 + 0.04 * t)
+    bg_clip = bg_clip.set_position("center")
+
     txt_clip = ImageClip(overlay_path).set_duration(duration)
 
     video = CompositeVideoClip([bg_clip, txt_clip]).set_audio(audio)
@@ -257,7 +295,7 @@ def build_video(title, desc, audio_path, output_video, news_link, aspect_ratio="
         if os.path.exists(p):
             os.remove(p)
 
-# --- 7. YOUTUBE UPLOADER + COMMUNITY COMMENT ---
+# --- 7. YOUTUBE UPLOADER ---
 def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
     client_id = os.environ.get("CLIENT_ID")
     client_secret = os.environ.get("CLIENT_SECRET")
@@ -292,14 +330,12 @@ def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
     video_id = response.get('id')
     print(f"Video Uploaded! ID: {video_id}")
 
-    # Thumbnail Upload
     try:
         youtube.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(thumbnail_path)).execute()
         print("Thumbnail Uploaded!")
     except Exception as e:
         print(f"Thumbnail failed: {e}")
 
-    # Post a Pinned Comment (Community Post Alternative)
     try:
         comment_text = f"📢 {title}\n\nइस खबर के बारे में आपका क्या कहना है? कमेंट में बताएं! 👇\n#news #breakingnews"
         youtube.commentThreads().insert(
@@ -311,14 +347,14 @@ def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
                 }
             }
         ).execute()
-        print("Pinned Comment (Community Post) Posted Successfully!")
+        print("Pinned Comment Posted Successfully!")
     except Exception as e:
         print(f"Comment posting failed: {e}")
 
 # --- MAIN EXECUTION ---
 def main():
     print("Fetching trending news...")
-    news_title, news_desc, news_link = get_latest_news()
+    news_title, news_desc, news_link, news_image_url = get_latest_news()
     if not news_title:
         print("No news found.")
         return
@@ -335,7 +371,7 @@ def main():
     short_audio = "short_audio.mp3"
     generate_audio(short_script, short_audio)
     short_video = "shorts_video.mp4"
-    build_video(title, short_script, short_audio, short_video, news_link, aspect_ratio="9:16")
+    build_video(title, short_script, short_audio, short_video, news_link, news_image_url, aspect_ratio="9:16", video_type="short")
     
     print("Uploading Shorts to YouTube...")
     upload_to_youtube(
@@ -350,7 +386,7 @@ def main():
     long_audio = "long_audio.mp3"
     generate_audio(long_script, long_audio)
     long_video = "long_video.mp4"
-    build_video(title, long_script, long_audio, long_video, news_link, aspect_ratio="16:9")
+    build_video(title, long_script, long_audio, long_video, news_link, news_image_url, aspect_ratio="16:9", video_type="long")
     
     print("Uploading Long Video to YouTube...")
     upload_to_youtube(
