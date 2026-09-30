@@ -4,21 +4,23 @@ import asyncio
 import textwrap
 import urllib.request
 import xml.etree.ElementTree as ET
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
 
-# 1. DOWNLOAD HINDI FONT AUTOMATICALLY (FOR GITHUB LINUX RUNNER)
+# 1. DOWNLOAD HINDI FONT AUTOMATICALLY (WORKING LINK)
 FONT_PATH = "NotoSansDevanagari-Bold.ttf"
 
 def ensure_hindi_font():
     if not os.path.exists(FONT_PATH):
         print("Downloading Devanagari Font...")
-        url = "https://github.com/google/fonts/raw/main/ofl/notosansdevanagari/NotoSansDevanagari-Bold.ttf"
+        url = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosansdevanagari/NotoSansDevanagari-Bold.ttf"
         try:
-            urllib.request.urlretrieve(url, FONT_PATH)
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response, open(FONT_PATH, 'wb') as out_file:
+                out_file.write(response.read())
             print("Font downloaded successfully!")
         except Exception as e:
             print(f"Font download failed: {e}")
@@ -29,13 +31,9 @@ ensure_hindi_font()
 def clean_html(text):
     if not text:
         return ""
-    # Remove HTML tags
     clean = re.sub(r'<[^>]+>', '', text)
-    # Remove URLs
     clean = re.sub(r'http[s]?://\S+', '', clean)
-    # Remove special HTML entities like &nbsp; &amp;
     clean = re.sub(r'&[a-zA-Z0-9#]+;', ' ', clean)
-    # Clean extra whitespaces
     clean = re.sub(r'\s+', ' ', clean).strip()
     return clean
 
@@ -56,12 +54,16 @@ def get_latest_news():
 
     return title, description
 
-# 3. TEXT-TO-SPEECH (gTTS / TTS)
+# 3. TEXT-TO-SPEECH (EDGE-TTS AUTOMATIC INSTALL & RUN)
 def generate_audio(text, output_file="news.mp3"):
     try:
-        from gtts import gTTS
-        tts = gTTS(text=text, lang='hi', slow=False)
-        tts.save(output_file)
+        os.system(f'python -m pip install edge-tts')
+        import edge_tts
+        async def main_tts():
+            communicate = edge_tts.Communicate(text, "hi-IN-MadhurNeural", rate="+20%")
+            await communicate.save(output_file)
+        asyncio.run(main_tts())
+        print("Audio generated successfully!")
     except Exception as e:
         print(f"Audio generation error: {e}")
         raise e
@@ -86,11 +88,9 @@ def create_text_overlay(title, desc, size=(1080, 1920)):
     box_h = int(h * 0.40)
     box_top = h - box_h - 100
 
-    # Red Breaking News Tag
     draw.rectangle([60, box_top - 50, 450, box_top + 15], fill=(220, 38, 38))
     draw.text((80, box_top - 40), "BREAKING NEWS", font=header_font, fill=(255, 255, 255))
 
-    # Translucent Dark Background for Text
     draw.rectangle([40, box_top, w - 40, h - 80], fill=(0, 0, 0, 220), outline=(220, 38, 38), width=5)
 
     full_text = f"{wrapped_title}\n\n{wrapped_desc}"
@@ -106,7 +106,6 @@ def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
     duration = audio.duration
     size = (1080, 1920) if aspect_ratio == "9:16" else (1920, 1080)
 
-    # Dark Gradient Background
     bg_img = Image.new('RGB', size, color=(15, 23, 42))
     bg_path = f"bg_{size[0]}x{size[1]}.png"
     bg_img.save(bg_path)
