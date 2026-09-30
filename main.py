@@ -1,3 +1,8 @@
+import PIL.Image
+# 🛠️ Pillow और MoviePy के बीच के एरर को ठीक करने के लिए यह पैच
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.Resampling.LANCZOS
+
 import os
 import re
 import asyncio
@@ -34,9 +39,9 @@ def download_font():
 
 FONT_PATH = download_font()
 
-# Gemini Setup
+# Gemini Setup (अब gemini-1.5-flash इस्तेमाल कर रहे हैं)
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
 # --- 1. CLEAN HTML ---
 def clean_html(text):
@@ -55,7 +60,6 @@ def get_latest_news():
     if API_KEY:
         print("Using News API...")
         try:
-            # यहाँ आप अपने News API का URL डाल सकते हैं (जैसे NewsAPI.org, GNews, आदि)
             url = f"https://newsapi.org/v2/top-headlines?country=in&language=hi&apiKey={API_KEY}"
             response = requests.get(url, timeout=15)
             data = response.json()
@@ -93,7 +97,6 @@ def get_latest_news():
 def fetch_news_image(link, title, size, video_type, provided_image_url=None):
     w, h = size
     
-    # 1. News API से मिली इमेज डाउनलोड करें
     if provided_image_url:
         try:
             img_data = requests.get(provided_image_url, timeout=10).content
@@ -105,7 +108,6 @@ def fetch_news_image(link, title, size, video_type, provided_image_url=None):
         except Exception as e:
             print(f"News API image download failed: {e}")
 
-    # 2. AI इमेज जनरेट करें (Shorts और Long के लिए अलग)
     print(f"Generating AI image for {video_type} video...")
     if video_type == "short":
         prompt = f"Vertical breaking news background about: {title}, highly dramatic, intense lighting, social media viral style, 8k, photorealistic"
@@ -128,7 +130,7 @@ def fetch_news_image(link, title, size, video_type, provided_image_url=None):
         
     return None
 
-# --- 3. GEMINI SCRIPT GENERATION (LONG & HOOK) ---
+# --- 3. GEMINI SCRIPT GENERATION ---
 def generate_script_with_gemini(news_title, news_desc):
     prompt = f"""
     आप एक वायरल YouTube न्यूज़ एंकर हैं। इस न्यूज़ के आधार पर हिंदी में स्क्रिप्ट लिखें।
@@ -161,7 +163,6 @@ def generate_script_with_gemini(news_title, news_desc):
 
 # --- 4. TTS AUDIO GENERATION (FEMALE VOICE) ---
 async def make_audio(text, output_file):
-    # 🎙️ यहाँ लड़की की आवाज़ (hi-IN-SwaraNeural) सेट की गई है
     communicate = edge_tts.Communicate(text, "hi-IN-SwaraNeural", rate="+20%", volume="+20%")
     await communicate.save(output_file)
 
@@ -190,7 +191,6 @@ def create_overlay(title, desc, size=(1080, 1920), video_type="short"):
         header_font = font
 
     if video_type == "short":
-        # 🎬 SHORTS STYLE
         wrap_w = 22
         wrapped_title = "\n".join(textwrap.wrap(title, width=wrap_w))
         wrapped_desc = "\n".join(textwrap.wrap(desc, width=wrap_w + 5))
@@ -207,7 +207,6 @@ def create_overlay(title, desc, size=(1080, 1920), video_type="short"):
         draw.text((70, box_top + 50 + title_height), wrapped_desc, font=font, fill=(255, 255, 255))
         
     else:
-        # 📺 LONG VIDEO STYLE (Lower Third)
         wrapped_title = "\n".join(textwrap.wrap(title, width=50))
         wrapped_desc = "\n".join(textwrap.wrap(desc, width=60))
         
@@ -276,7 +275,7 @@ def build_video(title, desc, audio_path, output_video, news_link, provided_image
 
     overlay_path = create_overlay(title, desc, size=size, video_type=video_type)
 
-    # 🎬 KEN BURNS EFFECT
+    # Ken Burns Effect
     bg_clip = ImageClip(bg_path_final).set_duration(duration)
     bg_clip = bg_clip.resize(lambda t: 1 + 0.04 * t)
     bg_clip = bg_clip.set_position("center")
