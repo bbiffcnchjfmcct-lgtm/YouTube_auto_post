@@ -16,9 +16,9 @@ import google.generativeai as genai
 # फॉन्ट का पाथ (GitHub Actions में ऑटोमैटिक इंस्टॉल हो जाएगा)
 FONT_PATH = "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf"
 
-# Gemini Setup
+# Gemini Setup (मॉडल का नाम बदल दिया गया है)
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 # --- 1. CLEAN HTML ---
 def clean_html(text):
@@ -56,18 +56,22 @@ def generate_script_with_gemini(news_title, news_desc):
     SHORT_SCRIPT: [यहाँ शॉर्ट स्क्रिप्ट लिखें]
     LONG_SCRIPT: [यहाँ लॉन्ग स्क्रिप्ट लिखें]
     """
-    response = model.generate_content(prompt)
-    text = response.text
-    
-    title_match = re.search(r'TITLE:\s*(.*)', text)
-    short_match = re.search(r'SHORT_SCRIPT:\s*(.*?)(?=LONG_SCRIPT:|$)', text, re.DOTALL)
-    long_match = re.search(r'LONG_SCRIPT:\s*(.*)', text, re.DOTALL)
-    
-    title = title_match.group(1).strip() if title_match else news_title
-    short_script = short_match.group(1).strip() if short_match else news_desc
-    long_script = long_match.group(1).strip() if long_match else news_desc
-    
-    return title, short_script, long_script
+    try:
+        response = model.generate_content(prompt)
+        text = response.text
+        
+        title_match = re.search(r'TITLE:\s*(.*)', text)
+        short_match = re.search(r'SHORT_SCRIPT:\s*(.*?)(?=LONG_SCRIPT:|$)', text, re.DOTALL)
+        long_match = re.search(r'LONG_SCRIPT:\s*(.*)', text, re.DOTALL)
+        
+        title = title_match.group(1).strip() if title_match else news_title
+        short_script = short_match.group(1).strip() if short_match else news_desc
+        long_script = long_match.group(1).strip() if long_match else news_desc
+        
+        return title, short_script, long_script
+    except Exception as e:
+        print(f"Gemini Error: {e}. Using fallback.")
+        return news_title, news_desc, news_desc
 
 # --- 4. TTS AUDIO GENERATION ---
 async def make_audio(text, output_file):
