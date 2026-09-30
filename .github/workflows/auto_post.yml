@@ -1,9 +1,7 @@
 name: Auto YouTube News Post
 
 on:
-  schedule:
-    - cron: '0 2 * * *'  # रोज़ सुबह भारतीय समय 7:30 AM पर चलेगा
-  workflow_dispatch:      # मैन्युअली चलाने के लिए
+workflow_dispatch:      # मैन्युअली चलाने के लिए
 
 jobs:
   build-and-upload:
