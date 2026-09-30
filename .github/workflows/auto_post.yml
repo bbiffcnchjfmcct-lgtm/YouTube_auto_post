@@ -1,7 +1,10 @@
-name: Auto YouTube News Post
+name: Daily YouTube News Post
 
 on:
-workflow_dispatch:      # मैन्युअली चलाने के लिए
+  schedule:
+    # यह रोज सुबह 9:00 बजे IST (3:30 AM UTC) पर रन होगा
+    - cron: '30 3 * * *'
+  workflow_dispatch: # मैन्युअली रन करने के लिए
 
 jobs:
   build-and-upload:
@@ -12,25 +15,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Install Dependencies & Fix ImageMagick
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick fonts-dejavu fonts-dejavu-core
+          sudo apt-get install -y ffmpeg imagemagick fonts-noto fonts-dejavu fonts-dejavu-core
           # Fix ImageMagick Policy Limits
-          sudo sed -i 's/<policy domain="resource" name="width" value=".*"\/>/<policy domain="resource" name="width" value="16KP"\/>/g' /etc/ImageMagick-6/policy.xml
-          sudo sed -i 's/<policy domain="resource" name="height" value=".*"\/>/<policy domain="resource" name="height" value="16KP"\/>/g' /etc/ImageMagick-6/policy.xml
-          sudo sed -i 's/<policy domain="path" rights="none" pattern="@\*"/<policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+          sudo sed -i 's/policy domain="resource" name="width" value=".*"/policy domain="resource" name="width" value="16KP"/' /etc/ImageMagick-6/policy.xml || true
+          sudo sed -i 's/policy domain="resource" name="height" value=".*"/policy domain="resource" name="height" value="16KP"/' /etc/ImageMagick-6/policy.xml || true
+          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml || true
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run Auto Post Script
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CLIENT_ID: ${{ secrets.CLIENT_ID }}
           CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
           REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
         run: python main.py
-        
