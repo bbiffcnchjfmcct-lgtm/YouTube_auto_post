@@ -1,11 +1,12 @@
 import os
 import re
 import asyncio
+import textwrap
 import feedparser
 from bs4 import BeautifulSoup
 import edge_tts
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import TextClip, AudioFileClip, CompositeVideoClip, ColorClip
+from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, ColorClip
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.oauth2.credentials import Credentials
@@ -23,50 +24,71 @@ def clean_news_text(raw_text):
 
 # 2. FAST NEWS ANCHOR VOICE (EDGE-TTS)
 async def generate_fast_voice(text, output_audio):
-    # +25% rate makes it sound like a fast-paced news anchor
     voice = "hi-IN-MadhurNeural"
     communicate = edge_tts.Communicate(text, voice, rate="+25%")
     await communicate.save(output_audio)
 
-# 3. AUTO THUMBNAIL GENERATOR
+# 3. CREATE TEXT IMAGE WITHOUT IMAGEMAGICK CRASH
+def create_text_image(title, desc, size=(1080, 1920), font_size=40):
+    w, h = size
+    img = Image.new('RGBA', (w, h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+
+    full_text = f"{title}\n\n{desc}"
+    # Wrap text to fit screen width
+    wrapped_lines = textwrap.wrap(full_text, width=28 if w == 1080 else 50)
+    wrapped_text = "\n".join(wrapped_lines)
+
+    # Draw semi-transparent background box
+    draw.rectangle([50, h//4, w-50, 3*h//4], fill=(0, 0, 0, 180), outline=(220, 20, 60), width=5)
+    draw.text((w//2, h//2), wrapped_text, font=font, fill=(255, 255, 255), anchor="mm", align="center")
+
+    temp_img_path = f"temp_text_{w}x{h}.png"
+    img.save(temp_img_path)
+    return temp_img_path
+
+# 4. AUTO THUMBNAIL GENERATOR
 def create_thumbnail(title_text, output_img, size=(1280, 720)):
     w, h = size
     img = Image.new('RGB', (w, h), color=(18, 18, 18))
     draw = ImageDraw.Draw(img)
     
-    # Border & Banner Format
     draw.rectangle([20, 20, w - 20, h - 20], outline=(255, 255, 255), width=8)
     draw.rectangle([40, 40, w - 40, 160], fill=(220, 20, 60))
     
-    # Header text
-    draw.text((60, 60), "BREAKING NEWS", fill=(255, 255, 255))
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 45)
+    except:
+        font = ImageFont.load_default()
+
+    draw.text((60, 60), "BREAKING NEWS", font=font, fill=(255, 255, 255))
+    
+    wrapped = "\n".join(textwrap.wrap(title_text, width=40))
+    draw.text((60, 250), wrapped, font=font, fill=(255, 255, 255))
+    
     img.save(output_img)
 
-# 4. VIDEO MAKER (FOR SHORTS & LONG)
+# 5. BUILD VIDEO (SHORTS & LONG)
 def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
     audio = AudioFileClip(audio_path)
     duration = audio.duration
 
     if aspect_ratio == "9:16":
         size = (1080, 1920)
-        font_size = 50
-        text_box_size = (900, 1200)
-    else: # 16:9 Long Video
+        font_size = 42
+    else:
         size = (1920, 1080)
-        font_size = 60
-        text_box_size = (1700, 800)
+        font_size = 48
 
     bg = ColorClip(size=size, color=(15, 15, 30)).set_duration(duration)
-
-    display_text = f"🔴 {title}\n\n{desc}"
-    txt_clip = TextClip(
-        display_text,
-        fontsize=font_size,
-        color='white',
-        size=text_box_size,
-        method='caption',
-        font="DejaVu-Sans-Bold"
-    ).set_position('center').set_duration(duration)
+    text_img_path = create_text_image(title, desc, size=size, font_size=font_size)
+    
+    txt_clip = ImageClip(text_img_path).set_duration(duration)
 
     video = CompositeVideoClip([bg, txt_clip]).set_audio(audio)
     video.write_videofile(
@@ -79,8 +101,10 @@ def build_video(title, desc, audio_path, output_video, aspect_ratio="9:16"):
     )
     audio.close()
     video.close()
+    if os.path.exists(text_img_path):
+        os.remove(text_img_path)
 
-# 5. UPLOAD TO YOUTUBE WITH THUMBNAIL
+# 6. UPLOAD TO YOUTUBE
 def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
     client_id = os.environ.get("CLIENT_ID")
     client_secret = os.environ.get("CLIENT_SECRET")
@@ -120,13 +144,15 @@ def upload_to_youtube(video_path, thumbnail_path, title, description, tags):
     video_id = response.get("id")
     print(f"Uploaded Successfully! Video ID: {video_id}")
 
-    # Set Thumbnail
     if os.path.exists(thumbnail_path):
-        youtube.thumbnails().set(
-            videoId=video_id,
-            media_body=MediaFileUpload(thumbnail_path)
-        ).execute()
-        print("Thumbnail set successfully!")
+        try:
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=MediaFileUpload(thumbnail_path)
+            ).execute()
+            print("Thumbnail set successfully!")
+        except Exception as e:
+            print(f"Thumbnail upload failed: {e}")
 
 # MAIN EXECUTION
 def main():
